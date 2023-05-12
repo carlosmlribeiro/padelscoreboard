@@ -1,7 +1,10 @@
-#include <ezButton.h>
 #include <MD_Parola.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
+#include <WiFiManager.h>
+#include <PubSubClient.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
 
 // Uncomment according to your hardware type
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
@@ -9,22 +12,24 @@
 
 // Defining size, and output pins
 #define MAX_DEVICES 4
-#define CS_PIN 15
+#define CS_PIN 5
 
 #define GAMEPAUSED 0
 #define GAMESTART 1
 #define GAMEON 2
 #define GAMEFINISHED 3
 #define WAITINGFORINPUT 4
+#define THRESHOLD 30
 
 #define GAME 0
 #define SET 1
 #define MATCH 2
 
-ezButton buttonRed(4);
-ezButton buttonBlue(5);
-
 MD_Parola myDisplay = MD_Parola(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
+
+WiFiManager wifiManager;
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
 
 int scoreBlueGame;
 int scoreBlueSet;
@@ -33,18 +38,22 @@ int scoreRedGame;
 int scoreRedSet;
 int scoreRedMatch;
 
+bool connected = false;
+bool mqttConnected = false;
+
 uint32_t lastMillisButtonPress;
 
 int status = GAMEPAUSED;
 
 String score = "";
 
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    // message received
+    Serial.println("Message received");
+}
+
 void setup() {
   Serial.begin(9600); 
-
-  //set buttons
-  buttonRed.setDebounceTime(100);
-  buttonBlue.setDebounceTime(100);
 
 	// Intialize the object
 	myDisplay.begin();
@@ -55,7 +64,20 @@ void setup() {
 	// Clear the display
 	myDisplay.displayClear();
 
-  //myDisplay.displayScroll("Hello", PA_CENTER, PA_SCROLL_LEFT, 100);
+  wifiManager.setConfigPortalTimeout(180);
+
+  connected = wifiManager.autoConnect("tally","12345678");
+
+  Serial.print("connected? ");
+  Serial.println(connected);
+
+  if (connected) {
+    espClient.setInsecure();
+    client.setServer("f8f95d8f94df4b3e9aa3d5c3e6491869.s2.eu.hivemq.cloud",8883);
+    client.setCallback(mqttCallback);
+    Serial.println("Connected to MQTT Server");
+  } 
+
   
   //start game
   startGame();
@@ -75,12 +97,20 @@ void startGame() {
 
   //menu choose:
   //ProSet&GP; 3Set&GP; ProSet&AA; 3Set&AA
+
+  mqttConnected = client.connect("tally1", "tally", "tally123");
+
+  Serial.print("mqttconnected? ");
+  Serial.println(mqttConnected);
+
+  if (mqttConnected) {
+    client.publish("newPadel/feitonumoito","Game Started");
+  }
+
 }
 
 void loop() {
 
-  buttonRed.loop();
-  buttonBlue.loop();
 
   //if (myDisplay.displayAnimate()) {
 	//  myDisplay.displayReset();
@@ -88,7 +118,6 @@ void loop() {
 
   uint32_t currentMillis = millis();  
   
-
   //if (myDisplay.displayAnimate()) {
 	//	myDisplay.displayReset();
 	//}
@@ -100,8 +129,14 @@ void loop() {
   //startGame();
 
   //point scored
-  if (buttonBlue.isPressed()) { 
+  if (touchRead(15) < THRESHOLD) { 
+    delay(500); //debounce
+
     Serial.println("button blue pressed");
+
+    if (mqttConnected) {
+      client.publish("newPadel/feitonumoito","blue");
+    }
     //timestamp for key pressed 
     lastMillisButtonPress = millis();
     
@@ -145,8 +180,13 @@ void loop() {
     }
 
   } 
-  if (buttonRed.isPressed()) { 
+  if (touchRead(2) < THRESHOLD) { 
+    delay(500); //debounce
+
     Serial.println("button red pressed");
+    if (mqttConnected) {
+      client.publish("newPadel/feitonumoito","red");
+    }
     //timestamp for key pressed 
     lastMillisButtonPress = millis();
     scoreRedGame++;
@@ -263,18 +303,5 @@ void displayScore(int type) {
 
 
   myDisplay.print(currentScore.c_str());
-
-  Serial.print("game:");
-  Serial.print(scoreBlueGameString);
-  Serial.print("-");
-  Serial.println(scoreRedGameString);
-  Serial.print("set:");
-  Serial.print(scoreBlueSet);
-  Serial.print("-");
-  Serial.println(scoreRedSet);
-  Serial.print("match:");
-  Serial.print(scoreBlueMatch);
-  Serial.print("-");
-  Serial.println(scoreRedMatch);
   
 }
